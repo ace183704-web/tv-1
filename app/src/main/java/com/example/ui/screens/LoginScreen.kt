@@ -52,7 +52,8 @@ fun LoginScreen(viewModel: IptvViewModel) {
                     colors = listOf(MidnightNavy, SteelSlate, MidnightNavy)
                 )
             )
-            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .windowInsetsPadding(WindowInsets.safeDrawing),
+        contentAlignment = Alignment.TopCenter
     ) {
         if (firebaseUser == null && !showLocalForms) {
             // ----------------------------------------------------
@@ -66,6 +67,7 @@ fun LoginScreen(viewModel: IptvViewModel) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .widthIn(max = 650.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -324,6 +326,7 @@ fun LoginScreen(viewModel: IptvViewModel) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .widthIn(max = 650.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -618,6 +621,7 @@ fun LoginScreen(viewModel: IptvViewModel) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .widthIn(max = 760.dp)
                     .padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -913,7 +917,7 @@ fun LoginScreen(viewModel: IptvViewModel) {
                                         color = TextWhite
                                     )
                                     Text(
-                                        text = if (portal.type == "XTREAM") "${portal.hostUrl}:${portal.port} ($portal.username)" else "M3U Link Sub",
+                                        text = if (portal.type == "XTREAM") "${portal.hostUrl}:${portal.port} (${portal.username})" else "M3U Link Sub",
                                         fontSize = 11.sp,
                                         color = TextMuted,
                                         modifier = Modifier.padding(top = 1.dp)

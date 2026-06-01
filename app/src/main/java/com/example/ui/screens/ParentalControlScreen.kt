@@ -1,7 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -53,11 +53,14 @@ fun ParentalControlScreen(viewModel: IptvViewModel) {
                     colors = listOf(MidnightNavy, SteelSlate, MidnightNavy)
                 )
             )
-            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .windowInsetsPadding(WindowInsets.safeDrawing),
+        contentAlignment = Alignment.TopCenter
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .widthIn(max = 680.dp)
+                .verticalScroll(rememberScrollState())
                 .padding(24.dp)
         ) {
             // Header Bar

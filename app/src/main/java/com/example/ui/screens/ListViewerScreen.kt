@@ -145,7 +145,12 @@ fun ListViewerScreen(viewModel: IptvViewModel) {
             }
 
             // Stream List View Container (Grid for Movie/Series, Column for Channels)
-            Box(modifier = Modifier.weight(1f)) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.TopCenter
+            ) {
                 if (streams.isEmpty()) {
                     // Modern Empty State Illustration
                     Column(
@@ -172,7 +177,9 @@ fun ListViewerScreen(viewModel: IptvViewModel) {
                 } else if (activeType == "live" || activeType == "favorites") {
                     // Column list representing Live Channels
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .widthIn(max = 850.dp),
                         contentPadding = PaddingValues(bottom = 16.dp, start = 16.dp, end = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
@@ -196,10 +203,12 @@ fun ListViewerScreen(viewModel: IptvViewModel) {
                         }
                     }
                 } else {
-                    // Grid mapping for Movies & Series posters
+                    // Grid mapping for Movies & Series posters - Adaptive cells count for TV, Tablet and Landscape configurations
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
-                        modifier = Modifier.fillMaxSize(),
+                        columns = GridCells.Adaptive(minSize = 145.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .widthIn(max = 1100.dp),
                         contentPadding = PaddingValues(16.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)

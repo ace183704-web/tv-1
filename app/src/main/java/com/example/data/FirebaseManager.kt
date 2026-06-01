@@ -54,6 +54,9 @@ object FirebaseManager {
         ""
     }
 
+    private var activeApiKey: String = ""
+    private var activeProjectId: String = ""
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -64,6 +67,52 @@ object FirebaseManager {
     val syncStatusMessage = MutableStateFlow<String?>(null)
 
     fun initialize(context: Context) {
+        activeApiKey = firebaseApiKey
+        activeProjectId = firebaseProjectId
+
+        // Load and parse google-services.json dynamically from assets if available
+        try {
+            val jsonStream = try {
+                context.assets.open("google-services.json")
+            } catch (e: Exception) {
+                null
+            }
+            if (jsonStream != null) {
+                val jsonText = jsonStream.bufferedReader().use { it.readText() }
+                val root = JSONObject(jsonText)
+                
+                val projectInfoObj = root.optJSONObject("project_info")
+                val extractedProjId = projectInfoObj?.optString("project_id")
+                if (!extractedProjId.isNullOrEmpty()) {
+                    activeProjectId = extractedProjId
+                }
+
+                val clientArray = root.optJSONArray("client")
+                if (clientArray != null && clientArray.length() > 0) {
+                    val firstClient = clientArray.getJSONObject(0)
+                    val apiKeyArray = firstClient.optJSONArray("api_key")
+                    if (apiKeyArray != null && apiKeyArray.length() > 0) {
+                        val apiKeyObj = apiKeyArray.getJSONObject(0)
+                        val extractedApiKey = apiKeyObj.optString("current_key")
+                        if (!extractedApiKey.isNullOrEmpty()) {
+                            activeApiKey = extractedApiKey
+                        }
+                    }
+                }
+                Log.d(TAG, "Successfully loaded keys from google-services.json: projId=$activeProjectId")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing google-services.json from assets", e)
+        }
+
+        // Final values sanitization
+        if (activeApiKey.contains("YOUR_FIREBASE_API_KEY") || activeApiKey.isEmpty() || activeApiKey == "MY_GEMINI_API_KEY") {
+            activeApiKey = ""
+        }
+        if (activeProjectId.contains("YOUR_FIREBASE_PROJECT_ID") || activeProjectId.isEmpty()) {
+            activeProjectId = ""
+        }
+
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val uid = prefs.getString("uid", null)
         val email = prefs.getString("email", null)
@@ -97,7 +146,7 @@ object FirebaseManager {
      * Standard Real Firebase REST SignUp. Falls back to pristine simulated mode if Firebase key is not configured.
      */
     suspend fun signUpWithEmail(context: Context, email: String, pass: String): Result<FirebaseUser> = withContext(Dispatchers.IO) {
-        if (firebaseApiKey.isEmpty() || firebaseApiKey.contains("YOUR_FIREBASE_API_KEY") || firebaseApiKey == "MY_GEMINI_API_KEY") {
+        if (activeApiKey.isEmpty()) {
             // Simulated Flow - Perfect fallback for quick prototypes or offline runs
             val mockUid = "simulated_user_" + System.currentTimeMillis().toString().takeLast(6)
             val user = FirebaseUser(mockUid, email, "simulated_token_xyz")
@@ -107,7 +156,7 @@ object FirebaseManager {
         }
 
         try {
-            val url = "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$firebaseApiKey"
+            val url = "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$activeApiKey"
             val json = JSONObject().apply {
                 put("email", email)
                 put("password", pass)
@@ -144,7 +193,7 @@ object FirebaseManager {
      * Standard Real Firebase REST SignIn. Falls back to simulated account query.
      */
     suspend fun signInWithEmail(context: Context, email: String, pass: String): Result<FirebaseUser> = withContext(Dispatchers.IO) {
-        if (firebaseApiKey.isEmpty() || firebaseApiKey.contains("YOUR_FIREBASE_API_KEY") || firebaseApiKey == "MY_GEMINI_API_KEY") {
+        if (activeApiKey.isEmpty()) {
             // Simulated Sign In validation against locally saved mock accounts
             val savedPass = getSimulatedPassword(context, email)
             if (savedPass != null && savedPass == pass) {
@@ -167,7 +216,7 @@ object FirebaseManager {
         }
 
         try {
-            val url = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$firebaseApiKey"
+            val url = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$activeApiKey"
             val json = JSONObject().apply {
                 put("email", email)
                 put("password", pass)
@@ -222,7 +271,7 @@ object FirebaseManager {
      */
     suspend fun loadProvisionedPortals(context: Context) = withContext(Dispatchers.IO) {
         val user = currentUser.value ?: return@withContext
-        val isMock = firebaseProjectId.isEmpty() || firebaseProjectId.contains("YOUR_FIREBASE_PROJECT_ID")
+        val isMock = activeProjectId.isEmpty()
         
         if (isMock) {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -231,7 +280,7 @@ object FirebaseManager {
         }
 
         try {
-            val url = "https://$firebaseProjectId-default-rtdb.firebaseio.com/users/${user.uid}/portals.json?auth=${user.token}"
+            val url = "https://$activeProjectId-default-rtdb.firebaseio.com/users/${user.uid}/portals.json?auth=${user.token}"
             val request = Request.Builder().url(url).build()
             
             client.newCall(request).execute().use { response ->
@@ -284,7 +333,7 @@ object FirebaseManager {
      */
     suspend fun addProvisionedPortal(context: Context, portal: ProvisionedPortal): Result<Boolean> = withContext(Dispatchers.IO) {
         val user = currentUser.value ?: return@withContext Result.failure(Exception("No Authenticated User Session"))
-        val isMock = firebaseProjectId.isEmpty() || firebaseProjectId.contains("YOUR_FIREBASE_PROJECT_ID")
+        val isMock = activeProjectId.isEmpty()
 
         // 1. Add locally
         val currentList = provisionedPortals.value.filter { it.id != portal.id }.toMutableList()
@@ -299,7 +348,7 @@ object FirebaseManager {
 
         try {
             // Save to Firebase Realtime Database
-            val url = "https://$firebaseProjectId-default-rtdb.firebaseio.com/users/${user.uid}/portals/${portal.id}.json?auth=${user.token}"
+            val url = "https://$activeProjectId-default-rtdb.firebaseio.com/users/${user.uid}/portals/${portal.id}.json?auth=${user.token}"
             
             val json = JSONObject().apply {
                 put("id", portal.id)
@@ -339,7 +388,7 @@ object FirebaseManager {
      */
     suspend fun deleteProvisionedPortal(context: Context, portalId: String): Result<Boolean> = withContext(Dispatchers.IO) {
         val user = currentUser.value ?: return@withContext Result.failure(Exception("No auth session"))
-        val isMock = firebaseProjectId.isEmpty() || firebaseProjectId.contains("YOUR_FIREBASE_PROJECT_ID")
+        val isMock = activeProjectId.isEmpty()
 
         val currentList = provisionedPortals.value.filter { it.id != portalId }
         provisionedPortals.value = currentList
@@ -351,7 +400,7 @@ object FirebaseManager {
         }
 
         try {
-            val url = "https://$firebaseProjectId-default-rtdb.firebaseio.com/users/${user.uid}/portals/$portalId.json?auth=${user.token}"
+            val url = "https://$activeProjectId-default-rtdb.firebaseio.com/users/${user.uid}/portals/$portalId.json?auth=${user.token}"
             val request = Request.Builder().url(url).delete().build()
             
             client.newCall(request).execute().use { response ->

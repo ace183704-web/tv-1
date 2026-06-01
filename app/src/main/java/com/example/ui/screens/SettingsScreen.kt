@@ -49,11 +49,13 @@ fun SettingsScreen(viewModel: IptvViewModel) {
                     colors = listOf(MidnightNavy, SteelSlate, MidnightNavy)
                 )
             )
-            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .windowInsetsPadding(WindowInsets.safeDrawing),
+        contentAlignment = Alignment.TopCenter
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .widthIn(max = 680.dp)
                 .padding(24.dp)
         ) {
             // Header
