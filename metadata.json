@@ -1,0 +1,6 @@
+{
+  "name": "Smarters IPTV",
+  "description": "High performance IPTV client featuring support for M3U playlists, Xtream Codes API, EPG integration, parental controls, and custom player cores.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
