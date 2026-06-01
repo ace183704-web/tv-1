@@ -202,6 +202,57 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    val deviceProvisioningCode = FirebaseManager.getProvisioningCode(application)
+    val remoteProvisionSuccess = MutableStateFlow<Boolean?>(null)
+    val remoteProvisionError = MutableStateFlow<String?>(null)
+    val isRemoteProvisioning = MutableStateFlow(false)
+
+    fun remoteProvisionDevice(
+        targetCode: String,
+        name: String,
+        host: String,
+        port: String,
+        user: String,
+        pass: String,
+        type: String = "XTREAM",
+        url: String = ""
+    ) {
+        viewModelScope.launch {
+            if (targetCode.length != 8) {
+                remoteProvisionError.value = "Target code must be exactly 8 digits."
+                return@launch
+            }
+            if (name.isBlank() || (type == "XTREAM" && (host.isBlank() || user.isBlank() || pass.isBlank())) || (type == "M3U" && url.isBlank())) {
+                remoteProvisionError.value = "Please fill all required playlist credentials fields."
+                return@launch
+            }
+            isRemoteProvisioning.value = true
+            remoteProvisionSuccess.value = null
+            remoteProvisionError.value = null
+
+            val result = FirebaseManager.remoteProvisionPortal(
+                getApplication(),
+                targetCode,
+                name,
+                host,
+                port,
+                user,
+                pass,
+                type,
+                url
+            )
+
+            if (result.isSuccess) {
+                remoteProvisionSuccess.value = true
+                remoteProvisionError.value = null
+            } else {
+                remoteProvisionSuccess.value = false
+                remoteProvisionError.value = result.exceptionOrNull()?.message ?: "Remote provisioning failed."
+            }
+            isRemoteProvisioning.value = false
+        }
+    }
+
     init {
         // Automatically check if playlists are loaded from previous launches
         viewModelScope.launch {
@@ -209,6 +260,15 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 if (list.isNotEmpty() && activePlaylist.value == null) {
                     activePlaylist.value = list.first()
                     navigationDestination.value = "dashboard"
+                }
+            }
+        }
+
+        // Keep device registered for remote provisioning upon configuration/auth change
+        viewModelScope.launch {
+            FirebaseManager.currentUser.collect { user ->
+                if (user != null) {
+                    FirebaseManager.registerDeviceForProvisioning(getApplication())
                 }
             }
         }

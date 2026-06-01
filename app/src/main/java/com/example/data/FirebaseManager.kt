@@ -274,6 +274,48 @@ object FirebaseManager {
         val isMock = activeProjectId.isEmpty()
         
         if (isMock) {
+            val simDb = context.getSharedPreferences("simulated_remote_db", Context.MODE_PRIVATE)
+            val remotelyProvisionedRaw = simDb.getString("portals_${user.uid}", null)
+            if (remotelyProvisionedRaw != null) {
+                try {
+                    val list = mutableListOf<ProvisionedPortal>()
+                    
+                    // First load current local backup
+                    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val currentRaw = prefs.getString("backup_portals", "[]")
+                    val currentArr = JSONArray(currentRaw)
+                    val addedIds = mutableSetOf<String>()
+                    for (i in 0 until currentArr.length()) {
+                        val obj = currentArr.getJSONObject(i)
+                        val portal = parsePortalJson(obj.optString("id"), obj)
+                        list.add(portal)
+                        addedIds.add(portal.id)
+                    }
+                    
+                    // Add remote provisioned portals
+                    val remoteArr = JSONArray(remotelyProvisionedRaw)
+                    var changed = false
+                    for (i in 0 until remoteArr.length()) {
+                        val obj = remoteArr.getJSONObject(i)
+                        val portal = parsePortalJson(obj.optString("id"), obj)
+                        if (!addedIds.contains(portal.id)) {
+                            list.add(portal)
+                            addedIds.add(portal.id)
+                            changed = true
+                        }
+                    }
+                    
+                    if (changed) {
+                        provisionedPortals.value = list
+                        saveLocalPortalsBackup(context, list)
+                    }
+                    // Clear the simulated delivery queue once fetched/merged
+                    simDb.edit().remove("portals_${user.uid}").apply()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error merging simulated remote portals: ${e.message}")
+                }
+            }
+            
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             loadLocalBackupPortals(prefs)
             return@withContext
@@ -467,6 +509,156 @@ object FirebaseManager {
             prefs.edit().putString("backup_portals", arr.toString()).apply()
         } catch (e: Exception) {
             Log.e(TAG, "Error encoding portals for local backup: ${e.message}")
+        }
+    }
+
+    private var provisioningCode: String = ""
+    fun getProvisioningCode(context: Context): String {
+        if (provisioningCode.isNotEmpty()) return provisioningCode
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        var code = prefs.getString("provisioning_code", null)
+        if (code == null) {
+            val rand = (10000000..99999999).random()
+            code = rand.toString()
+            prefs.edit().putString("provisioning_code", code).apply()
+        }
+        provisioningCode = code
+        return code
+    }
+
+    suspend fun registerDeviceForProvisioning(context: Context): Result<Boolean> = withContext(Dispatchers.IO) {
+        val user = currentUser.value ?: return@withContext Result.failure(Exception("No Authenticated User"))
+        val code = getProvisioningCode(context)
+        val isMock = activeProjectId.isEmpty()
+        if (isMock) {
+            val simDb = context.getSharedPreferences("simulated_remote_db", Context.MODE_PRIVATE)
+            simDb.edit()
+                .putString("code_email_$code", user.email)
+                .putString("code_uid_$code", user.uid)
+                .apply()
+            syncStatusMessage.value = "Device registered locally (Code: $code)"
+            return@withContext Result.success(true)
+        }
+        try {
+            val url = "https://$activeProjectId-default-rtdb.firebaseio.com/devices/$code.json?auth=${user.token}"
+            val json = JSONObject().apply {
+                put("uid", user.uid)
+                put("email", user.email)
+                put("timestamp", System.currentTimeMillis())
+            }
+            val request = Request.Builder()
+                .url(url)
+                .put(json.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    Log.d(TAG, "Device registered for remote provisioning: $code -> ${user.uid}")
+                    return@withContext Result.success(true)
+                } else {
+                    Log.e(TAG, "Failed to register device: ${response.code}")
+                    return@withContext Result.failure(Exception("API Error ${response.code}"))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed registering device code: ${e.message}")
+            return@withContext Result.failure(e)
+        }
+    }
+
+    suspend fun remoteProvisionPortal(
+        context: Context,
+        targetCode: String,
+        name: String,
+        host: String,
+        port: String,
+        user: String,
+        pass: String,
+        type: String = "XTREAM",
+        m3uUrl: String = ""
+    ): Result<Boolean> = withContext(Dispatchers.IO) {
+        val currUser = currentUser.value ?: return@withContext Result.failure(Exception("No Authenticated Admin User Session"))
+        val isMock = activeProjectId.isEmpty()
+
+        if (isMock) {
+            val simDb = context.getSharedPreferences("simulated_remote_db", Context.MODE_PRIVATE)
+            val targetUserEmail = simDb.getString("code_email_$targetCode", null)
+            val targetUid = simDb.getString("code_uid_$targetCode", null)
+            
+            if (targetUid == null) {
+                return@withContext Result.failure(Exception("Target device code not found or offline"))
+            }
+
+            val id = "portal_" + System.currentTimeMillis()
+            val jsonPortal = JSONObject().apply {
+                put("id", id)
+                put("name", name)
+                put("hostUrl", host)
+                put("port", port)
+                put("username", user)
+                put("password", pass)
+                put("type", type)
+                put("url", m3uUrl)
+            }
+
+            val targetPortalsRaw = simDb.getString("portals_$targetUid", "[]")
+            val array = JSONArray(targetPortalsRaw)
+            array.put(jsonPortal)
+            simDb.edit().putString("portals_$targetUid", array.toString()).apply()
+
+            Log.d(TAG, "Simulated remote provision successful! Sent portal $name to $targetUserEmail ($targetUid)")
+            return@withContext Result.success(true)
+        }
+
+        try {
+            val lookupUrl = "https://$activeProjectId-default-rtdb.firebaseio.com/devices/$targetCode.json?auth=${currUser.token}"
+            val lookupRequest = Request.Builder().url(lookupUrl).build()
+            
+            var targetUid: String? = null
+            client.newCall(lookupRequest).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(Exception("Device lookup failed: API error ${response.code}"))
+                }
+                val body = response.body?.string() ?: "null"
+                if (body == "null" || body.isEmpty()) {
+                    return@withContext Result.failure(Exception("Target provisioning code '$targetCode' not registered or invalid"))
+                }
+                val obj = JSONObject(body)
+                targetUid = obj.optString("uid", null)
+            }
+
+            if (targetUid.isNullOrEmpty()) {
+                return@withContext Result.failure(Exception("Unable to resolve UID for provisioning code '$targetCode'"))
+            }
+
+            val portalId = "portal_" + System.currentTimeMillis()
+            val writeUrl = "https://$activeProjectId-default-rtdb.firebaseio.com/users/$targetUid/portals/$portalId.json?auth=${currUser.token}"
+            
+            val json = JSONObject().apply {
+                put("id", portalId)
+                put("name", name)
+                put("hostUrl", host)
+                put("port", port)
+                put("username", user)
+                put("password", pass)
+                put("type", type)
+                put("url", m3uUrl)
+            }
+
+            val writeRequest = Request.Builder()
+                .url(writeUrl)
+                .put(json.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            client.newCall(writeRequest).execute().use { response ->
+                if (response.isSuccessful) {
+                    return@withContext Result.success(true)
+                } else {
+                    return@withContext Result.failure(Exception("Failed to push portal configuration: API error ${response.code}"))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in remote provisioning execution", e)
+            return@withContext Result.failure(e)
         }
     }
 

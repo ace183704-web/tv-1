@@ -43,6 +43,8 @@ fun LoginScreen(viewModel: IptvViewModel) {
     val errorMsg by viewModel.addPlaylistError.collectAsState()
 
     var showLocalForms by remember { mutableStateOf(false) }
+    var adminClickCount by remember { mutableStateOf(0) }
+    var showAdminConsoleByUser by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -81,7 +83,13 @@ fun LoginScreen(viewModel: IptvViewModel) {
                         .size(80.dp)
                         .clip(RoundedCornerShape(20.dp))
                         .background(CinemaGold.copy(alpha = 0.15f))
-                        .border(1.5.dp, CinemaGold.copy(alpha = 0.4f), RoundedCornerShape(20.dp)),
+                        .border(1.5.dp, CinemaGold.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
+                        .clickable {
+                            adminClickCount++
+                            if (adminClickCount >= 5) {
+                                showAdminConsoleByUser = true
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -288,6 +296,9 @@ fun LoginScreen(viewModel: IptvViewModel) {
                 }
 
                 Spacer(modifier = Modifier.height(32.dp))
+                DeviceProvisioningCodeCard(code = viewModel.deviceProvisioningCode)
+
+                Spacer(modifier = Modifier.height(24.dp))
 
                 // Alternate direct local playlist loader
                 Text(
@@ -600,6 +611,8 @@ fun LoginScreen(viewModel: IptvViewModel) {
                         Icon(Icons.Default.ArrowForwardIos, contentDescription = "demo arrow mark", tint = ElectricCyan, modifier = Modifier.size(14.dp))
                     }
                 }
+                Spacer(modifier = Modifier.height(24.dp))
+                DeviceProvisioningCodeCard(code = viewModel.deviceProvisioningCode)
                 Spacer(modifier = Modifier.height(48.dp))
             }
         } 
@@ -635,11 +648,18 @@ fun LoginScreen(viewModel: IptvViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column {
+                    Column(
+                        modifier = Modifier.clickable {
+                            adminClickCount++
+                            if (adminClickCount >= 5) {
+                                showAdminConsoleByUser = true
+                            }
+                        }
+                    ) {
                         Text(
-                            text = "Cloud Sync Session",
+                            text = if (showAdminConsoleByUser) "Cloud Sync Session (Admin Mode Enabled)" else "Cloud Sync Session",
                             fontSize = 11.sp,
-                            color = CinemaGold,
+                            color = if (showAdminConsoleByUser) ElectricCyan else CinemaGold,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
@@ -669,6 +689,15 @@ fun LoginScreen(viewModel: IptvViewModel) {
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
+                    if (showAdminConsoleByUser) {
+                        item {
+                            AdminProvisioningConsole(
+                                viewModel = viewModel,
+                                onClose = { showAdminConsoleByUser = false }
+                            )
+                        }
+                    }
+
                     // Item A: Provision form
                     item {
                         Card(
@@ -938,6 +967,277 @@ fun LoginScreen(viewModel: IptvViewModel) {
                     item {
                         Spacer(modifier = Modifier.height(24.dp))
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DeviceProvisioningCodeCard(code: String) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("device_provisioning_card"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = SoftGrey.copy(alpha = 0.5f)),
+        border = BorderStroke(1.2.dp, CinemaGold.copy(alpha = 0.4f))
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Tv,
+                    contentDescription = "Remote Provisioning",
+                    tint = CinemaGold,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "REMOTE PROVISIONING CODE",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = CinemaGold,
+                    letterSpacing = 1.2.sp
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = code.chunked(4).joinToString(" "),
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = TextWhite,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                letterSpacing = 2.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Provide this unique code to an administrator or service provider to remotely configure IPTV channels on this device.",
+                fontSize = 11.sp,
+                color = TextMuted,
+                textAlign = TextAlign.Center,
+                lineHeight = 15.sp
+            )
+        }
+    }
+}
+
+@Composable
+fun AdminProvisioningConsole(
+    viewModel: IptvViewModel,
+    onClose: () -> Unit
+) {
+    val isProvisioning by viewModel.isRemoteProvisioning.collectAsState()
+    val provisionSuccess by viewModel.remoteProvisionSuccess.collectAsState()
+    val provisionError by viewModel.remoteProvisionError.collectAsState()
+
+    var targetCode by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+    var host by remember { mutableStateOf("") }
+    var port by remember { mutableStateOf("") }
+    var user by remember { mutableStateOf("") }
+    var pass by remember { mutableStateOf("") }
+    var type by remember { mutableStateOf("XTREAM") } // "XTREAM" or "M3U"
+    var m3uUrl by remember { mutableStateOf("") }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("admin_provisioning_console"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MidnightNavy.copy(alpha = 0.95f)),
+        border = BorderStroke(1.5.dp, ElectricCyan)
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = "Admin Console Icon",
+                        tint = ElectricCyan,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "ADMIN REMOTE PUSH CONSOLE",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = ElectricCyan,
+                        letterSpacing = 1.sp
+                    )
+                }
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "Close admin panel", tint = ActiveRed, modifier = Modifier.size(20.dp))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "Admins can deploy IPTV portal credentials directly into a user's cloud session via Firebase realtime Sync.",
+                fontSize = 11.sp,
+                color = TextMuted,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            // Target Device 8-digit provisioning code
+            OutlinedTextField(
+                value = targetCode,
+                onValueChange = { if (it.length <= 8) targetCode = it },
+                label = { Text("Target Device Code (8-digits)", color = ElectricCyan) },
+                placeholder = { Text("e.g. 12345678", color = TextMuted.copy(alpha = 0.3f)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = ElectricCyan,
+                    unfocusedBorderColor = SoftGrey,
+                    focusedLabelColor = ElectricCyan
+                ),
+                modifier = Modifier.fillMaxWidth().testTag("admin_target_code_input")
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Playlist Name
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Playlist / Portal Name", color = TextMuted) },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ElectricCyan, unfocusedBorderColor = SoftGrey),
+                modifier = Modifier.fillMaxWidth().testTag("admin_playlist_name_input")
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Type tab selector
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MidnightNavy)
+                    .padding(3.dp)
+            ) {
+                Button(
+                    onClick = { type = "XTREAM" },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (type == "XTREAM") ElectricCyan else Color.Transparent,
+                        contentColor = if (type == "XTREAM") MidnightNavy else TextWhite
+                    ),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text("XTREAM API", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = { type = "M3U" },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (type == "M3U") ElectricCyan else Color.Transparent,
+                        contentColor = if (type == "M3U") MidnightNavy else TextWhite
+                    ),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text("M3U PLAYLIST Link", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (type == "XTREAM") {
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = { host = it },
+                    label = { Text("Server Host / Domain", color = TextMuted) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ElectricCyan, unfocusedBorderColor = SoftGrey),
+                    modifier = Modifier.fillMaxWidth().testTag("admin_host_input")
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = port,
+                        onValueChange = { port = it },
+                        label = { Text("Port", color = TextMuted) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ElectricCyan, unfocusedBorderColor = SoftGrey),
+                        modifier = Modifier.weight(1f).testTag("admin_port_input")
+                    )
+                    OutlinedTextField(
+                        value = user,
+                        onValueChange = { user = it },
+                        label = { Text("Username", color = TextMuted) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ElectricCyan, unfocusedBorderColor = SoftGrey),
+                        modifier = Modifier.weight(2f).testTag("admin_user_input")
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = pass,
+                    onValueChange = { pass = it },
+                    label = { Text("Password", color = TextMuted) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ElectricCyan, unfocusedBorderColor = SoftGrey),
+                    modifier = Modifier.fillMaxWidth().testTag("admin_pass_input")
+                )
+            } else {
+                OutlinedTextField(
+                    value = m3uUrl,
+                    onValueChange = { m3uUrl = it },
+                    label = { Text("M3U Playlist Source URL Link", color = TextMuted) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ElectricCyan, unfocusedBorderColor = SoftGrey),
+                    modifier = Modifier.fillMaxWidth().testTag("admin_m3u_url_input")
+                )
+            }
+
+            if (provisionError != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(text = provisionError ?: "", color = ActiveRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+
+            if (provisionSuccess == true) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(text = "✓ Remote Provision Pushed Successfully!", color = ElectricCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = {
+                    viewModel.remoteProvisionDevice(
+                        targetCode = targetCode,
+                        name = name,
+                        host = host,
+                        port = port,
+                        user = user,
+                        pass = pass,
+                        type = type,
+                        url = m3uUrl
+                    )
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan, contentColor = MidnightNavy),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp).testTag("admin_send_btn"),
+                enabled = !isProvisioning
+            ) {
+                if (isProvisioning) {
+                    CircularProgressIndicator(color = MidnightNavy, modifier = Modifier.size(24.dp))
+                } else {
+                    Icon(Icons.Default.Send, contentDescription = "send admin cmd")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("PUSH REMOTE CONFIG", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
             }
         }
