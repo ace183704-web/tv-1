@@ -14,10 +14,15 @@ import com.example.ui.IptvViewModel
 import com.example.ui.screens.*
 import com.example.ui.theme.MyApplicationTheme
 
+import com.example.data.FirebaseManager
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        
+        // Initialize our cloud provisioning module with applicationContext
+        FirebaseManager.initialize(applicationContext)
         
         // Instantiate our lifecycle-secured IPTV ViewModel directly
         val viewModel = IptvViewModel(application)

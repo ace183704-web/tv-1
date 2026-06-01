@@ -108,6 +108,100 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     val isAuthenticating = MutableStateFlow(false)
     val addPlaylistError = MutableStateFlow<String?>(null)
 
+    // Firebase Cloud Provisioning States
+    val firebaseUser = FirebaseManager.currentUser
+    val provisionedPortals = FirebaseManager.provisionedPortals
+    val firebaseSyncStatus = FirebaseManager.syncStatusMessage
+    val firebaseAuthError = MutableStateFlow<String?>(null)
+
+    fun registerWithFirebase(email: String, pass: String) {
+        viewModelScope.launch {
+            if (email.isBlank() || pass.isBlank()) {
+                firebaseAuthError.value = "Email and password cannot be empty."
+                return@launch
+            }
+            isAuthenticating.value = true
+            firebaseAuthError.value = null
+            val result = FirebaseManager.signUpWithEmail(getApplication(), email, pass)
+            if (result.isSuccess) {
+                firebaseAuthError.value = null
+            } else {
+                firebaseAuthError.value = result.exceptionOrNull()?.message ?: "Registration failed."
+            }
+            isAuthenticating.value = false
+        }
+    }
+
+    fun loginWithFirebase(email: String, pass: String) {
+        viewModelScope.launch {
+            if (email.isBlank() || pass.isBlank()) {
+                firebaseAuthError.value = "Email and password cannot be empty."
+                return@launch
+            }
+            isAuthenticating.value = true
+            firebaseAuthError.value = null
+            val result = FirebaseManager.signInWithEmail(getApplication(), email, pass)
+            if (result.isSuccess) {
+                firebaseAuthError.value = null
+            } else {
+                firebaseAuthError.value = result.exceptionOrNull()?.message ?: "Authentication failed."
+            }
+            isAuthenticating.value = false
+        }
+    }
+
+    fun loginWithSocial(provider: String) {
+        viewModelScope.launch {
+            isAuthenticating.value = true
+            firebaseAuthError.value = null
+            val result = FirebaseManager.loginWithSocial(getApplication(), provider)
+            if (result.isSuccess) {
+                firebaseAuthError.value = null
+            } else {
+                firebaseAuthError.value = result.exceptionOrNull()?.message ?: "Social auth failed."
+            }
+            isAuthenticating.value = false
+        }
+    }
+
+    fun logoutFirebase() {
+        FirebaseManager.clearSession(getApplication())
+    }
+
+    fun provisionPortal(name: String, host: String, port: String, user: String, pass: String, type: String) {
+        viewModelScope.launch {
+            if (name.isBlank() || host.isBlank() || user.isBlank() || pass.isBlank()) {
+                addPlaylistError.value = "All credentials fields are required."
+                return@launch
+            }
+            isAuthenticating.value = true
+            addPlaylistError.value = null
+            val id = "portal_" + System.currentTimeMillis()
+            val portal = ProvisionedPortal(
+                id = id,
+                name = name,
+                hostUrl = host,
+                port = port,
+                username = user,
+                password = pass,
+                type = type
+            )
+            val result = FirebaseManager.addProvisionedPortal(getApplication(), portal)
+            if (result.isSuccess) {
+                addPlaylistError.value = null
+            } else {
+                addPlaylistError.value = "Failed to sync provision: " + result.exceptionOrNull()?.message
+            }
+            isAuthenticating.value = false
+        }
+    }
+
+    fun deleteProvisionedPortal(id: String) {
+        viewModelScope.launch {
+            FirebaseManager.deleteProvisionedPortal(getApplication(), id)
+        }
+    }
+
     init {
         // Automatically check if playlists are loaded from previous launches
         viewModelScope.launch {
