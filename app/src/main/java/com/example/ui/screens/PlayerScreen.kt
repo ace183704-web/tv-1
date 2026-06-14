@@ -110,7 +110,15 @@ fun PlayerScreen(viewModel: IptvViewModel) {
         stream?.let {
             if (it.streamUrl.isNotBlank() && (it.streamUrl.startsWith("http://") || it.streamUrl.startsWith("https://") || it.streamUrl.startsWith("rtsp://") || it.streamUrl.startsWith("content://") || it.streamUrl.startsWith("file://"))) {
                 try {
-                    val mediaItem = MediaItem.fromUri(it.streamUrl)
+                    val streamUrl = it.streamUrl
+                    val mediaItem = if (streamUrl.contains(".m3u8", ignoreCase = true)) {
+                        MediaItem.Builder()
+                            .setUri(streamUrl)
+                            .setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
+                            .build()
+                    } else {
+                        MediaItem.fromUri(streamUrl)
+                    }
                     exoPlayer.setMediaItem(mediaItem)
                     exoPlayer.prepare()
                     exoPlayer.play()

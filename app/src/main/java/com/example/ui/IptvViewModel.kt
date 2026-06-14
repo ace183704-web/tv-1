@@ -363,8 +363,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 val pId = repository.setupDemoPlaylist()
                 val playlist = database.iptvDao().getPlaylistById(pId)
                 if (playlist != null) {
-                    activePlaylist.value = playlist
-                    navigateTo("dashboard")
+                    selectPlaylist(playlist)
                 }
             } catch (e: Exception) {
                 addPlaylistError.value = "Demo system failed to sync: ${e.message}"
@@ -383,13 +382,17 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             isAuthenticating.value = true
             addPlaylistError.value = null
             
-            val result = repository.addM3UPlaylist(name, url)
+            var cleanedUrl = url.trim()
+            if (!cleanedUrl.startsWith("http://") && !cleanedUrl.startsWith("https://")) {
+                cleanedUrl = "http://$cleanedUrl"
+            }
+            
+            val result = repository.addM3UPlaylist(name, cleanedUrl)
             if (result.isSuccess) {
                 val pId = result.getOrThrow()
                 val playlist = database.iptvDao().getPlaylistById(pId)
                 if (playlist != null) {
-                    activePlaylist.value = playlist
-                    navigateTo("dashboard")
+                    selectPlaylist(playlist)
                 }
             } else {
                 addPlaylistError.value = result.exceptionOrNull()?.message ?: "Failed loading M3U Playlist."
@@ -407,18 +410,46 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             isAuthenticating.value = true
             addPlaylistError.value = null
             
-            val result = repository.addXtreamCodesPlaylist(name, serverUrl, user, pass)
+            var cleanedUrl = serverUrl.trim()
+            if (!cleanedUrl.startsWith("http://") && !cleanedUrl.startsWith("https://")) {
+                cleanedUrl = "http://$cleanedUrl"
+            }
+            
+            val result = repository.addXtreamCodesPlaylist(name, cleanedUrl, user.trim(), pass.trim())
             if (result.isSuccess) {
                 val pId = result.getOrThrow()
                 val playlist = database.iptvDao().getPlaylistById(pId)
                 if (playlist != null) {
-                    activePlaylist.value = playlist
-                    navigateTo("dashboard")
+                    selectPlaylist(playlist)
                 }
             } else {
                 addPlaylistError.value = result.exceptionOrNull()?.message ?: "Xtream Connection refused."
             }
             isAuthenticating.value = false
+        }
+    }
+
+    // Playlist Refresh States
+    val isRefreshingPlaylist = MutableStateFlow(false)
+    val refreshPlaylistError = MutableStateFlow<String?>(null)
+    val refreshPlaylistSuccess = MutableStateFlow(false)
+
+    fun refreshActivePlaylist() {
+        val currentPlaylist = activePlaylist.value ?: return
+        viewModelScope.launch {
+            isRefreshingPlaylist.value = true
+            refreshPlaylistError.value = null
+            refreshPlaylistSuccess.value = false
+            
+            val result = repository.refreshPlaylist(currentPlaylist)
+            if (result.isSuccess) {
+                refreshPlaylistSuccess.value = true
+                refreshPlaylistError.value = null
+            } else {
+                refreshPlaylistSuccess.value = false
+                refreshPlaylistError.value = result.exceptionOrNull()?.message ?: "Failed to refresh playlist."
+            }
+            isRefreshingPlaylist.value = false
         }
     }
 

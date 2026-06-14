@@ -89,7 +89,7 @@ fun SettingsScreen(viewModel: IptvViewModel) {
         timeString = SimpleDateFormat(formatStr, Locale.US).format(Date())
     }
 
-    // 12 IPTV Smarters settings items to display in the grid
+    // 13 IPTV Smarters settings items to display in the grid
     val settingsItemsByDesign = remember {
         listOf(
             SettingsGridItem("general", "General Settings", "App Language, display themes & system specifications", Icons.Default.Settings, ElectricCyan),
@@ -103,7 +103,8 @@ fun SettingsScreen(viewModel: IptvViewModel) {
             SettingsGridItem("external_players", "External Players", "Connect & configure intents for external media players", Icons.Default.OpenInNew, ElectricCyan),
             SettingsGridItem("multi_screen", "MULTI-SCREEN", "Configure split screen orientation templates and layouts", Icons.Default.GridView, CinemaGold),
             SettingsGridItem("speed_test", "Speed Test", "Inspect active download bandwidth and streaming latency", Icons.Default.Speed, ElectricCyan),
-            SettingsGridItem("vpn", "VPN", "Check, connect & alter secure network routing tunnels", Icons.Default.Security, CinemaGold)
+            SettingsGridItem("vpn", "VPN", "Check, connect & alter secure network routing tunnels", Icons.Default.Security, CinemaGold),
+            SettingsGridItem("refresh_playlist", "Refresh Playlist", "Force update active portal streams and category metadata", Icons.Default.Sync, Color.Green)
         )
     }
 
@@ -391,6 +392,7 @@ fun SettingsOverlayDialog(
                         "multi_screen" -> "MULTI-SCREEN COMPOSITION GRID"
                         "speed_test" -> "NETWORK SPEED TEST INTEGRATION"
                         "vpn" -> "SECURE EXTRA GATEWAY TUNNEL"
+                        "refresh_playlist" -> "FORCE REFRESH ACTIVE PLAYLIST"
                         else -> "SMARTERS SYSTEM UTILITY"
                     },
                     fontSize = 15.sp,
@@ -1304,6 +1306,90 @@ fun SettingsOverlayDialog(
                                 text = if (vpnActive) "DISCONNECT SECURE VPN" else "CONNECT ENCRYPTED TUNNEL",
                                 fontWeight = FontWeight.Bold
                             )
+                        }
+                    }
+
+                    // 13. REFRESH PLAYLIST
+                    "refresh_playlist" -> {
+                        val isRefreshing by viewModel.isRefreshingPlaylist.collectAsState()
+                        val refreshError by viewModel.refreshPlaylistError.collectAsState()
+                        val refreshSuccess by viewModel.refreshPlaylistSuccess.collectAsState()
+                        val currentPlaylist by viewModel.activePlaylist.collectAsState()
+
+                        Text(
+                            text = "Force refresh the current active playlist catalog data (Live channels, VOD Movies, and Series listings) directly from the stream service host.",
+                            color = TextMuted,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp
+                        )
+
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFF142044),
+                            border = BorderStroke(1.dp, Color(0xFF23356D))
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Active Portal Name", color = TextMuted, fontSize = 11.sp)
+                                    Text(currentPlaylist?.name ?: "No Profile Active", color = TextWhite, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Connection Standard", color = TextMuted, fontSize = 11.sp)
+                                    Text(currentPlaylist?.type ?: "Unknown", color = TextWhite, fontSize = 11.sp)
+                                }
+                                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Host URL", color = TextMuted, fontSize = 11.sp)
+                                    Text((currentPlaylist?.url ?: "N/A").take(32) + "...", color = TextWhite, fontSize = 11.sp)
+                                }
+                            }
+                        }
+
+                        if (isRefreshing) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CircularProgressIndicator(color = CinemaGold)
+                                Text(
+                                    text = "Refreshing active streams database...",
+                                    color = CinemaGold,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        } else {
+                            if (refreshSuccess) {
+                                Text(
+                                    text = "✓ Playlist catalog and EPG synchronized successfully!",
+                                    color = Color.Green,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            } else if (refreshError != null) {
+                                Text(
+                                    text = "Error: ${refreshError}",
+                                    color = ActiveRed,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            Button(
+                                onClick = { viewModel.refreshActivePlaylist() },
+                                colors = ButtonDefaults.buttonColors(containerColor = CinemaGold, contentColor = MidnightNavy),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth().height(48.dp)
+                            ) {
+                                Icon(Icons.Default.Sync, contentDescription = "refresh")
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("FORCE SYNC CHANNELS & GENRES", fontWeight = FontWeight.ExtraBold)
+                            }
                         }
                     }
                 }

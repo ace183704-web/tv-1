@@ -27,6 +27,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.IptvViewModel
@@ -41,8 +42,9 @@ fun LoginScreen(viewModel: IptvViewModel) {
     val provisionedPortals by viewModel.provisionedPortals.collectAsState()
     val syncStatusMessage by viewModel.firebaseSyncStatus.collectAsState()
     val errorMsg by viewModel.addPlaylistError.collectAsState()
+    val localPlaylists by viewModel.playlists.collectAsState()
 
-    var showLocalForms by remember { mutableStateOf(false) }
+    var showLocalForms by remember(localPlaylists) { mutableStateOf(localPlaylists.isNotEmpty()) }
     var adminClickCount by remember { mutableStateOf(0) }
     var showAdminConsoleByUser by remember { mutableStateOf(false) }
 
@@ -606,41 +608,146 @@ fun LoginScreen(viewModel: IptvViewModel) {
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Demo provisioner card selection
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { if (!isAuthenticating) viewModel.loadDemoProvider() }
-                        .testTag("demo_provider_card"),
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = SteelSlate),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(18.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
+                // Your Local Profiles / Playlists Section
+                val activePlaylistState by viewModel.activePlaylist.collectAsState()
+
+                if (localPlaylists.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Your Configured Playlists & Profiles",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier
+                            .align(Alignment.Start)
+                            .padding(bottom = 8.dp)
+                    )
+
+                    localPlaylists.forEach { playlist ->
+                        val isActive = activePlaylistState?.id == playlist.id
+                        Card(
                             modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(ElectricCyan.copy(alpha = 0.15f)),
-                            contentAlignment = Alignment.Center
+                                .fillMaxWidth()
+                                .padding(vertical = 5.dp)
+                                .clickable { viewModel.selectPlaylist(playlist) }
+                                .testTag("local_playlist_card_${playlist.id}"),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isActive) SoftGrey.copy(alpha = 0.5f) else SteelSlate.copy(alpha = 0.4f)
+                            ),
+                            border = if (isActive) BorderStroke(1.5.dp, CinemaGold) else BorderStroke(1.dp, SoftGrey.copy(alpha = 0.3f))
                         ) {
-                            Icon(Icons.Default.PlayCircle, contentDescription = "demo play sign", tint = ElectricCyan, modifier = Modifier.size(24.dp))
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isActive) CinemaGold.copy(alpha = 0.15f) else SoftGrey.copy(alpha = 0.3f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = if (playlist.type == "XTREAM") Icons.Default.CloudSync else Icons.Default.Link,
+                                        contentDescription = "Playlist Icon",
+                                        tint = if (isActive) CinemaGold else TextWhite,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(12.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = playlist.name,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isActive) CinemaGold else Color.White,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = if (playlist.type == "XTREAM") "Xtream Codes: ${playlist.url}" else "M3U Link: ${playlist.url}",
+                                        fontSize = 11.sp,
+                                        color = TextMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                if (isActive) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(CinemaGold.copy(alpha = 0.15f))
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = "ACTIVE",
+                                            color = CinemaGold,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+
+                                IconButton(
+                                    onClick = { viewModel.removePlaylist(playlist) },
+                                    modifier = Modifier.size(36.dp).testTag("delete_playlist_${playlist.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Delete Playlist",
+                                        tint = ActiveRed.copy(alpha = 0.85f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
                         }
-                        
-                        Spacer(modifier = Modifier.width(14.dp))
-                        
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(viewModel.getString("load_demo"), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ElectricCyan)
-                            Text(viewModel.getString("demo_desc"), fontSize = 11.sp, color = TextMuted, modifier = Modifier.padding(top = 1.dp))
-                        }
-                        
-                        Icon(Icons.Default.ArrowForwardIos, contentDescription = "demo arrow mark", tint = ElectricCyan, modifier = Modifier.size(14.dp))
                     }
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
-                Spacer(modifier = Modifier.height(24.dp))
+
+                // Demo provisioner card selection (always show as an easy option if they want to add it)
+                val hasDemo = localPlaylists.any { it.name == "Demo Stream Provider" || it.username == "demo_user" }
+                if (!hasDemo) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { if (!isAuthenticating) viewModel.loadDemoProvider() }
+                            .testTag("demo_provider_card"),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = SteelSlate),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(18.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(ElectricCyan.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.PlayCircle, contentDescription = "demo play sign", tint = ElectricCyan, modifier = Modifier.size(24.dp))
+                            }
+                            
+                            Spacer(modifier = Modifier.width(14.dp))
+                            
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(viewModel.getString("load_demo"), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = ElectricCyan)
+                                Text(viewModel.getString("demo_desc"), fontSize = 11.sp, color = TextMuted, modifier = Modifier.padding(top = 1.dp))
+                            }
+                            
+                            Icon(Icons.Default.ArrowForwardIos, contentDescription = "demo arrow mark", tint = ElectricCyan, modifier = Modifier.size(14.dp))
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
                 DeviceProvisioningCodeCard(code = viewModel.deviceProvisioningCode)
                 Spacer(modifier = Modifier.height(48.dp))
             }

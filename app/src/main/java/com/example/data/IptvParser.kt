@@ -124,7 +124,10 @@ object IptvParser {
                 val bodyString = response.body?.string() ?: return false
                 val responseJson = JSONObject(bodyString)
                 val userInfo = responseJson.optJSONObject("user_info")
-                return userInfo != null && userInfo.optString("auth") == "1"
+                if (userInfo == null) return false
+                val authString = userInfo.optString("auth")
+                val authInt = userInfo.optInt("auth", -1)
+                return authString == "1" || authInt == 1
             }
         } catch (e: Exception) {
             Log.e(TAG, "Xtream verification failed: ${e.message}")
@@ -155,10 +158,49 @@ object IptvParser {
                     val request = Request.Builder().url(catUrl).build()
                     client.newCall(request).execute().use { res ->
                         if (res.isSuccessful) {
-                            val arr = JSONArray(res.body?.string() ?: "[]")
-                            for (i in 0 until arr.length()) {
-                                val obj = arr.getJSONObject(i)
-                                categoriesMap[obj.getString("category_id")] = obj.getString("category_name")
+                            val bodyString = res.body?.string() ?: "[]"
+                            val trimmed = bodyString.trim()
+                            if (trimmed.startsWith("[")) {
+                                val arr = JSONArray(trimmed)
+                                for (i in 0 until arr.length()) {
+                                    val obj = arr.getJSONObject(i)
+                                    val categoryId = obj.optString("category_id")
+                                    val categoryName = obj.optString("category_name")
+                                    if (categoryId.isNotEmpty() && categoryName.isNotEmpty()) {
+                                        categoriesMap[categoryId] = categoryName
+                                    }
+                                }
+                            } else if (trimmed.startsWith("{")) {
+                                val rootObj = JSONObject(trimmed)
+                                val keys = rootObj.keys()
+                                while (keys.hasNext()) {
+                                    val key = keys.next()
+                                    val nestedObj = rootObj.optJSONObject(key)
+                                    if (nestedObj != null) {
+                                        val categoryId = nestedObj.optString("category_id", key)
+                                        val categoryName = nestedObj.optString("category_name")
+                                        if (categoryId.isNotEmpty() && categoryName.isNotEmpty()) {
+                                            categoriesMap[categoryId] = categoryName
+                                        }
+                                    } else {
+                                        // In case it is a wrapper having "categories" or "genres"
+                                        val nestedArr = rootObj.optJSONArray(key)
+                                        if (nestedArr != null) {
+                                            for (i in 0 until nestedArr.length()) {
+                                                val obj = nestedArr.optJSONObject(i)
+                                                if (obj != null) {
+                                                    val categoryId = obj.optString("category_id")
+                                                    val categoryName = obj.optString("category_name")
+                                                    if (categoryId.isNotEmpty() && categoryName.isNotEmpty()) {
+                                                        categoriesMap[categoryId] = categoryName
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                Log.w(TAG, "Expected JSON format for categories but got: $bodyString")
                             }
                         }
                     }
@@ -173,28 +215,36 @@ object IptvParser {
                 val request = Request.Builder().url(liveUrl).build()
                 client.newCall(request).execute().use { res ->
                     if (res.isSuccessful) {
-                        val arr = JSONArray(res.body?.string() ?: "[]")
-                        for (i in 0 until arr.length()) {
-                            val obj = arr.getJSONObject(i)
-                            val streamId = obj.optString("stream_id")
-                            val name = obj.optString("name")
-                            val catId = obj.optString("category_id")
-                            val catName = categoriesMap[catId] ?: "General Live"
-                            val icon = obj.optString("stream_icon")
-                            // Live plays as: http://server.com:80/live/user/pass/stream_id.ts
-                            val playUrl = "$base/live/$username/$password/$streamId.ts"
-                            
-                            streams.add(
-                                StreamItem(
-                                    playlistId = playlistId,
-                                    streamId = streamId,
-                                    name = name,
-                                    categoryName = catName,
-                                    categoryType = "live",
-                                    iconUrl = icon,
-                                    streamUrl = playUrl
+                        val bodyString = res.body?.string() ?: "[]"
+                        if (bodyString.trim().startsWith("[")) {
+                            val arr = JSONArray(bodyString)
+                            for (i in 0 until arr.length()) {
+                                val obj = arr.getJSONObject(i)
+                                val streamId = obj.optString("stream_id")
+                                val name = obj.optString("name")
+                                val catId = obj.optString("category_id")
+                                val catName = obj.optString("category_name").takeIf { it.isNotEmpty() }
+                                    ?: categoriesMap[catId]
+                                    ?: categoriesMap[catId.trim()]
+                                    ?: "General Live"
+                                val icon = obj.optString("stream_icon")
+                                // Live plays as: http://server.com:80/live/user/pass/stream_id.ts
+                                val playUrl = "$base/live/$username/$password/$streamId.ts"
+                                
+                                streams.add(
+                                    StreamItem(
+                                        playlistId = playlistId,
+                                        streamId = streamId,
+                                        name = name,
+                                        categoryName = catName,
+                                        categoryType = "live",
+                                        iconUrl = icon,
+                                        streamUrl = playUrl
+                                    )
                                 )
-                            )
+                            }
+                        } else {
+                            Log.w(TAG, "Expected JSON array for live streams but got: $bodyString")
                         }
                     }
                 }
@@ -208,29 +258,37 @@ object IptvParser {
                 val request = Request.Builder().url(vodUrl).build()
                 client.newCall(request).execute().use { res ->
                     if (res.isSuccessful) {
-                        val arr = JSONArray(res.body?.string() ?: "[]")
-                        for (i in 0 until arr.length()) {
-                            val obj = arr.getJSONObject(i)
-                            val streamId = obj.optString("stream_id")
-                            val name = obj.optString("name")
-                            val catId = obj.optString("category_id")
-                            val container = obj.optString("container_extension", "mp4")
-                            val catName = categoriesMap[catId] ?: "General Movies"
-                            val icon = obj.optString("stream_icon")
-                            // Movie plays as: http://server.com:80/movie/user/pass/stream_id.mp4
-                            val playUrl = "$base/movie/$username/$password/$streamId.$container"
-                            
-                            streams.add(
-                                StreamItem(
-                                    playlistId = playlistId,
-                                    streamId = streamId,
-                                    name = name,
-                                    categoryName = catName,
-                                    categoryType = "movie",
-                                    iconUrl = icon,
-                                    streamUrl = playUrl
+                        val bodyString = res.body?.string() ?: "[]"
+                        if (bodyString.trim().startsWith("[")) {
+                            val arr = JSONArray(bodyString)
+                            for (i in 0 until arr.length()) {
+                                val obj = arr.getJSONObject(i)
+                                val streamId = obj.optString("stream_id")
+                                val name = obj.optString("name")
+                                val catId = obj.optString("category_id")
+                                val container = obj.optString("container_extension", "mp4")
+                                val catName = obj.optString("category_name").takeIf { it.isNotEmpty() }
+                                    ?: categoriesMap[catId]
+                                    ?: categoriesMap[catId.trim()]
+                                    ?: "General Movies"
+                                val icon = obj.optString("stream_icon")
+                                // Movie plays as: http://server.com:80/movie/user/pass/stream_id.mp4
+                                val playUrl = "$base/movie/$username/$password/$streamId.$container"
+                                
+                                streams.add(
+                                    StreamItem(
+                                        playlistId = playlistId,
+                                        streamId = streamId,
+                                        name = name,
+                                        categoryName = catName,
+                                        categoryType = "movie",
+                                        iconUrl = icon,
+                                        streamUrl = playUrl
+                                    )
                                 )
-                            )
+                            }
+                        } else {
+                            Log.w(TAG, "Expected JSON array for movies but got: $bodyString")
                         }
                     }
                 }
@@ -244,28 +302,36 @@ object IptvParser {
                 val request = Request.Builder().url(seriesUrl).build()
                 client.newCall(request).execute().use { res ->
                     if (res.isSuccessful) {
-                        val arr = JSONArray(res.body?.string() ?: "[]")
-                        for (i in 0 until arr.length()) {
-                            val obj = arr.getJSONObject(i)
-                            val seriesId = obj.optString("series_id")
-                            val name = obj.optString("name")
-                            val catId = obj.optString("category_id")
-                            val catName = categoriesMap[catId] ?: "General Series"
-                            val icon = obj.optString("cover")
-                            // For series, typically we call nested episode info, but we can play a main streaming directory or demo fallback stream URL for smooth UX.
-                            val playUrl = "$base/series/$username/$password/$seriesId.mp4"
-                            
-                            streams.add(
-                                StreamItem(
-                                    playlistId = playlistId,
-                                    streamId = seriesId,
-                                    name = name,
-                                    categoryName = catName,
-                                    categoryType = "series",
-                                    iconUrl = icon,
-                                    streamUrl = playUrl
+                        val bodyString = res.body?.string() ?: "[]"
+                        if (bodyString.trim().startsWith("[")) {
+                            val arr = JSONArray(bodyString)
+                            for (i in 0 until arr.length()) {
+                                val obj = arr.getJSONObject(i)
+                                val seriesId = obj.optString("series_id")
+                                val name = obj.optString("name")
+                                val catId = obj.optString("category_id")
+                                val catName = obj.optString("category_name").takeIf { it.isNotEmpty() }
+                                    ?: categoriesMap[catId]
+                                    ?: categoriesMap[catId.trim()]
+                                    ?: "General Series"
+                                val icon = obj.optString("cover")
+                                // For series, typically we call nested episode info, but we can play a main streaming directory or demo fallback stream URL for smooth UX.
+                                val playUrl = "$base/series/$username/$password/$seriesId.mp4"
+                                
+                                streams.add(
+                                    StreamItem(
+                                        playlistId = playlistId,
+                                        streamId = seriesId,
+                                        name = name,
+                                        categoryName = catName,
+                                        categoryType = "series",
+                                        iconUrl = icon,
+                                        streamUrl = playUrl
+                                    )
                                 )
-                            )
+                            }
+                        } else {
+                            Log.w(TAG, "Expected JSON array for series but got: $bodyString")
                         }
                     }
                 }

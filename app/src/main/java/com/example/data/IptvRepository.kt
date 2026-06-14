@@ -134,4 +134,51 @@ class IptvRepository(private val dao: IptvDao) {
         
         playlistId
     }
+
+    suspend fun refreshPlaylist(playlist: Playlist): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            // 1. Fetch current streams to preserve favorite/locked choices
+            val oldStreams = dao.getStreamsByPlaylistDirect(playlist.id)
+            val favoriteIds = oldStreams.filter { it.isFavorite }.map { it.streamId }.toSet()
+            val lockedIds = oldStreams.filter { it.isLocked }.map { it.streamId }.toSet()
+
+            // 2. Fetch fresh stream list
+            val streams = if (playlist.type == "XTREAM") {
+                if (playlist.name == "Demo Stream Provider" || playlist.username == "demo_user") {
+                    val (demoStreams, _) = IptvParser.generateDemoStreams(playlist.id)
+                    demoStreams
+                } else {
+                    val isVerified = IptvParser.verifyXtreamCodes(playlist.url, playlist.username, playlist.password)
+                    if (!isVerified) {
+                        return@withContext Result.failure(Exception("Xtream Codes authentication failed during refresh. Please check credentials or host."))
+                    }
+                    IptvParser.fetchXtreamStreams(playlist.url, playlist.username, playlist.password, playlist.id)
+                }
+            } else if (playlist.type == "M3U") {
+                IptvParser.parseM3U(playlist.url, playlist.id)
+            } else {
+                return@withContext Result.failure(Exception("Unknown playlist type."))
+            }
+
+            if (streams.isNotEmpty()) {
+                // 3. Keep favorites/locks aligned
+                val updatedStreams = streams.map { stream ->
+                    stream.copy(
+                        isFavorite = favoriteIds.contains(stream.streamId),
+                        isLocked = lockedIds.contains(stream.streamId)
+                    )
+                }
+
+                // 4. Overwrite SQLite database records
+                dao.deleteStreamsByPlaylist(playlist.id)
+                dao.insertStreams(updatedStreams)
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception("Server returned empty stream index during refresh."))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Refresh playlist error: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
 }

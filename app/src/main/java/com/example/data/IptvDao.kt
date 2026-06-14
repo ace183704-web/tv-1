@@ -47,6 +47,9 @@ interface IptvDao {
     @Query("DELETE FROM stream_items WHERE playlistId = :playlistId")
     suspend fun deleteStreamsByPlaylist(playlistId: Long)
 
+    @Query("SELECT * FROM stream_items WHERE playlistId = :playlistId")
+    suspend fun getStreamsByPlaylistDirect(playlistId: Long): List<StreamItem>
+
     // EPG Guide
     @Query("SELECT * FROM epg_programs WHERE playlistId = :playlistId AND channelId = :channelId AND endTime > :now ORDER BY startTime ASC")
     fun getEPGForChannel(playlistId: Long, channelId: String, now: Long): Flow<List<EpgProgram>>
