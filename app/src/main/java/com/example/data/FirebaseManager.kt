@@ -576,7 +576,6 @@ object FirebaseManager {
         type: String = "XTREAM",
         m3uUrl: String = ""
     ): Result<Boolean> = withContext(Dispatchers.IO) {
-        val currUser = currentUser.value ?: return@withContext Result.failure(Exception("No Authenticated Admin User Session"))
         val isMock = activeProjectId.isEmpty()
 
         if (isMock) {
@@ -608,6 +607,8 @@ object FirebaseManager {
             Log.d(TAG, "Simulated remote provision successful! Sent portal $name to $targetUserEmail ($targetUid)")
             return@withContext Result.success(true)
         }
+
+        val currUser = currentUser.value ?: return@withContext Result.failure(Exception("No Authenticated Admin User Session"))
 
         try {
             val lookupUrl = "https://$activeProjectId-default-rtdb.firebaseio.com/devices/$targetCode.json?auth=${currUser.token}"

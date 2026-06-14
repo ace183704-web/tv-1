@@ -24,6 +24,19 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     // Language switching
     val currentLanguage = MutableStateFlow("en")
 
+    // IPTV Smarters Settings States
+    val streamFormat = MutableStateFlow("HLS (.m3u8)")
+    val timeFormat24h = MutableStateFlow(false)
+    val automationAutoRefresh = MutableStateFlow(true)
+    val automationLoadLast = MutableStateFlow(false)
+    val automationBootStart = MutableStateFlow(false)
+    val playerBuffering = MutableStateFlow("Standard - 2s")
+    val playerHwDecoders = MutableStateFlow(true)
+    val activeExternalPlayer = MutableStateFlow("Internal Player")
+    val multiScreenLayout = MutableStateFlow("Dual Screen (2 Streams)")
+    val vpnConnected = MutableStateFlow(false)
+    val vpnLocationSelected = MutableStateFlow("USA - New York")
+
     // Playlists
     val playlists: StateFlow<List<Playlist>> = repository.playlists
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

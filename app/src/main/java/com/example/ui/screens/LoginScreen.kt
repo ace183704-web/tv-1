@@ -108,7 +108,14 @@ fun LoginScreen(viewModel: IptvViewModel) {
                     fontWeight = FontWeight.ExtraBold,
                     color = CinemaGold,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.testTag("onboarding_title")
+                    modifier = Modifier
+                        .testTag("onboarding_title")
+                        .clickable {
+                            adminClickCount++
+                            if (adminClickCount >= 5) {
+                                showAdminConsoleByUser = true
+                            }
+                        }
                 )
 
                 Text(
@@ -118,6 +125,14 @@ fun LoginScreen(viewModel: IptvViewModel) {
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(top = 6.dp, bottom = 28.dp)
                 )
+
+                if (showAdminConsoleByUser) {
+                    AdminProvisioningConsole(
+                        viewModel = viewModel,
+                        onClose = { showAdminConsoleByUser = false }
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
 
                 // Glassmorphic Auth Input Card
                 Card(
@@ -360,11 +375,25 @@ fun LoginScreen(viewModel: IptvViewModel) {
                         text = "Direct IPTV Setup",
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
-                        color = TextWhite
+                        color = TextWhite,
+                        modifier = Modifier.clickable {
+                            adminClickCount++
+                            if (adminClickCount >= 5) {
+                                showAdminConsoleByUser = true
+                            }
+                        }
                     )
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
+
+                if (showAdminConsoleByUser) {
+                    AdminProvisioningConsole(
+                        viewModel = viewModel,
+                        onClose = { showAdminConsoleByUser = false }
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
 
                 Card(
                     modifier = Modifier
