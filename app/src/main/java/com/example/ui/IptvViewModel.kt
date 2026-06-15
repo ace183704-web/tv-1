@@ -36,6 +36,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     val multiScreenLayout = MutableStateFlow("Dual Screen (2 Streams)")
     val vpnConnected = MutableStateFlow(false)
     val vpnLocationSelected = MutableStateFlow("USA - New York")
+    val diagnosticLoggingEnabled = MutableStateFlow(false)
 
     // Playlists
     val playlists: StateFlow<List<Playlist>> = repository.playlists
@@ -231,8 +232,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         url: String = ""
     ) {
         viewModelScope.launch {
-            if (targetCode.length != 8) {
-                remoteProvisionError.value = "Target code must be exactly 8 digits."
+            if (targetCode.length != 8 && targetCode.length != 16) {
+                remoteProvisionError.value = "Target code must be an 8-digit pairing code or a 16-character ANDROID_ID."
                 return@launch
             }
             if (name.isBlank() || (type == "XTREAM" && (host.isBlank() || user.isBlank() || pass.isBlank())) || (type == "M3U" && url.isBlank())) {
@@ -266,7 +267,25 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun refreshDeviceRegistration() {
+        viewModelScope.launch {
+            FirebaseManager.registerDeviceForProvisioning(getApplication())
+            FirebaseManager.loadProvisionedPortals(getApplication())
+        }
+    }
+
     init {
+        val prefs = application.getSharedPreferences("iptv_settings_prefs", android.content.Context.MODE_PRIVATE)
+        diagnosticLoggingEnabled.value = prefs.getBoolean("diagnostic_logging_enabled", false)
+        FirebaseManager.diagnosticLoggingEnabled = diagnosticLoggingEnabled.value
+
+        viewModelScope.launch {
+            diagnosticLoggingEnabled.collect { enabled ->
+                FirebaseManager.diagnosticLoggingEnabled = enabled
+                prefs.edit().putBoolean("diagnostic_logging_enabled", enabled).apply()
+            }
+        }
+
         // Automatically check if playlists are loaded from previous launches
         viewModelScope.launch {
             playlists.collect { list ->
@@ -280,9 +299,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         // Keep device registered for remote provisioning upon configuration/auth change
         viewModelScope.launch {
             FirebaseManager.currentUser.collect { user ->
-                if (user != null) {
-                    FirebaseManager.registerDeviceForProvisioning(getApplication())
-                }
+                FirebaseManager.registerDeviceForProvisioning(getApplication())
+                FirebaseManager.loadProvisionedPortals(getApplication())
             }
         }
     }

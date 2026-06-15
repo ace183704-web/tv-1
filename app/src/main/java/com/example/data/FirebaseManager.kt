@@ -14,6 +14,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 import com.example.BuildConfig
+import java.security.MessageDigest
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
+import javax.crypto.spec.IvParameterSpec
+import android.util.Base64
 
 data class FirebaseUser(
     val uid: String,
@@ -56,6 +61,164 @@ object FirebaseManager {
 
     private var activeApiKey: String = ""
     private var activeProjectId: String = ""
+    var diagnosticLoggingEnabled: Boolean = false
+    private var appContext: Context? = null
+
+    @Volatile
+    private var resolvedDatabaseBaseUrl: String? = null
+    private var googleServicesDbUrl: String? = null
+
+    private fun getCandidateDatabaseUrls(): List<String> {
+        val projId = activeProjectId
+        if (projId.isEmpty()) return emptyList()
+        val list = mutableListOf<String>()
+        val gsUrl = googleServicesDbUrl
+        if (!gsUrl.isNullOrEmpty()) {
+            list.add(gsUrl.removeSuffix("/"))
+        }
+        list.add("https://$projId-default-rtdb.firebaseio.com")
+        list.add("https://$projId.firebaseio.com")
+        list.add("https://$projId-default-rtdb.europe-west1.firebasedatabase.app")
+        list.add("https://$projId-default-rtdb.asia-southeast1.firebasedatabase.app")
+        list.add("https://$projId.europe-west1.firebasedatabase.app")
+        list.add("https://$projId.asia-southeast1.firebasedatabase.app")
+        list.add("https://$projId-default-rtdb.us-central1.firebasedatabase.app")
+        list.add("https://$projId.us-central1.firebasedatabase.app")
+        return list.distinct()
+    }
+
+    private suspend fun executeFirebaseCall(
+        relativeUrlPath: String,
+        queryParams: String,
+        method: String,
+        requestBodyString: String? = null
+    ): okhttp3.Response = withContext(Dispatchers.IO) {
+        val cachedUrl = resolvedDatabaseBaseUrl
+        val candidates = if (cachedUrl != null) {
+            listOf(cachedUrl)
+        } else {
+            getCandidateDatabaseUrls()
+        }
+
+        var lastException: Exception? = null
+        var lastResponseCode: Int = -1
+
+        val finalCandidates = if (candidates.isEmpty()) {
+            listOf("https://$activeProjectId-default-rtdb.firebaseio.com")
+        } else {
+            candidates
+        }
+
+        for (base in finalCandidates) {
+            val fullUrl = if (queryParams.isNotEmpty()) {
+                "$base$relativeUrlPath?$queryParams"
+            } else {
+                "$base$relativeUrlPath"
+            }
+
+            val body = if (requestBodyString != null) {
+                requestBodyString.toRequestBody("application/json".toMediaType())
+            } else {
+                null
+            }
+
+            val requestBuilder = Request.Builder().url(fullUrl)
+            when (method) {
+                "GET" -> requestBuilder.get()
+                "PUT" -> requestBuilder.put(body!!)
+                "DELETE" -> requestBuilder.delete()
+            }
+
+            try {
+                if (diagnosticLoggingEnabled) {
+                    Log.d(TAG, "[DIAGNOSTIC] Sending Firebase Request: $method $fullUrl")
+                }
+                val response = client.newCall(requestBuilder.build()).execute()
+                lastResponseCode = response.code
+                
+                if (response.code != 404) {
+                    if (resolvedDatabaseBaseUrl == null) {
+                        resolvedDatabaseBaseUrl = base
+                        Log.d(TAG, "Successfully resolved and cached base RTDB URL: $base")
+                        appContext?.let { ctx ->
+                            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                                .edit().putString("resolved_database_url", base).apply()
+                        }
+                    }
+                    if (diagnosticLoggingEnabled) {
+                        Log.d(TAG, "[DIAGNOSTIC] Firebase Response Code: ${response.code}")
+                    }
+                    return@withContext response
+                } else {
+                    Log.w(TAG, "RTDB candidate returned 404: $fullUrl")
+                    response.close()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error executing call on candidate base $base: ${e.message}")
+                lastException = e
+            }
+        }
+
+        if (cachedUrl != null) {
+            Log.w(TAG, "Cached database URL failed, clear cache and try list of candidates")
+            resolvedDatabaseBaseUrl = null
+            appContext?.let { ctx ->
+                ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().remove("resolved_database_url").apply()
+            }
+            val backupCandidates = getCandidateDatabaseUrls()
+            for (base in backupCandidates) {
+                if (base == cachedUrl) continue
+                val fullUrl = if (queryParams.isNotEmpty()) {
+                    "$base$relativeUrlPath?$queryParams"
+                } else {
+                    "$base$relativeUrlPath"
+                }
+                val body = if (requestBodyString != null) {
+                    requestBodyString.toRequestBody("application/json".toMediaType())
+                } else {
+                    null
+                }
+                val requestBuilder = Request.Builder().url(fullUrl)
+                when (method) {
+                    "GET" -> requestBuilder.get()
+                    "PUT" -> requestBuilder.put(body!!)
+                    "DELETE" -> requestBuilder.delete()
+                }
+                try {
+                if (diagnosticLoggingEnabled) {
+                    Log.d(TAG, "[DIAGNOSTIC] Sending Firebase Request to backup candidate: $method $fullUrl")
+                }
+                    val response = client.newCall(requestBuilder.build()).execute()
+                    lastResponseCode = response.code
+                    if (response.code != 404) {
+                        resolvedDatabaseBaseUrl = base
+                        Log.d(TAG, "Successfully updated cached base RTDB URL to: $base")
+                        appContext?.let { ctx ->
+                            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                                .edit().putString("resolved_database_url", base).apply()
+                        }
+                        if (diagnosticLoggingEnabled) {
+                            Log.d(TAG, "[DIAGNOSTIC] Backup Firebase Response Code: ${response.code}")
+                        }
+                        return@withContext response
+                    } else {
+                        response.close()
+                    }
+                } catch (e: Exception) {
+                    lastException = e
+                }
+            }
+        }
+
+        if (lastException != null) {
+            throw lastException
+        }
+
+        val resolvedMsg = "No active Firebase Realtime Database found for project '$activeProjectId'. " +
+                "Please enable Realtime Database in your Firebase console, create a database instance, and ensure the correct security rules are in place."
+        throw Exception(resolvedMsg)
+    }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -67,6 +230,7 @@ object FirebaseManager {
     val syncStatusMessage = MutableStateFlow<String?>(null)
 
     fun initialize(context: Context) {
+        appContext = context.applicationContext
         activeApiKey = firebaseApiKey
         activeProjectId = firebaseProjectId
 
@@ -85,6 +249,11 @@ object FirebaseManager {
                 val extractedProjId = projectInfoObj?.optString("project_id")
                 if (!extractedProjId.isNullOrEmpty()) {
                     activeProjectId = extractedProjId
+                }
+                val extractedDbUrl = projectInfoObj?.optString("firebase_url")
+                if (!extractedDbUrl.isNullOrEmpty()) {
+                    googleServicesDbUrl = extractedDbUrl
+                    Log.d(TAG, "Extracted firebase_url from google-services.json: $extractedDbUrl")
                 }
 
                 val clientArray = root.optJSONArray("client")
@@ -114,6 +283,8 @@ object FirebaseManager {
         }
 
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        resolvedDatabaseBaseUrl = prefs.getString("resolved_database_url", null)
+        Log.d(TAG, "Initialized database base URL from cache: $resolvedDatabaseBaseUrl")
         val uid = prefs.getString("uid", null)
         val email = prefs.getString("email", null)
         val token = prefs.getString("token", null)
@@ -270,12 +441,13 @@ object FirebaseManager {
      * Fetches provisioned portals from Firebase Realtime Database REST API.
      */
     suspend fun loadProvisionedPortals(context: Context) = withContext(Dispatchers.IO) {
-        val user = currentUser.value ?: return@withContext
+        val user = currentUser.value
         val isMock = activeProjectId.isEmpty()
+        val targetUid = user?.uid ?: "anon_${getProvisioningCode(context)}"
         
         if (isMock) {
             val simDb = context.getSharedPreferences("simulated_remote_db", Context.MODE_PRIVATE)
-            val remotelyProvisionedRaw = simDb.getString("portals_${user.uid}", null)
+            val remotelyProvisionedRaw = simDb.getString("portals_$targetUid", null)
             if (remotelyProvisionedRaw != null) {
                 try {
                     val list = mutableListOf<ProvisionedPortal>()
@@ -310,7 +482,7 @@ object FirebaseManager {
                         saveLocalPortalsBackup(context, list)
                     }
                     // Clear the simulated delivery queue once fetched/merged
-                    simDb.edit().remove("portals_${user.uid}").apply()
+                    simDb.edit().remove("portals_$targetUid").apply()
                 } catch (e: Exception) {
                     Log.e(TAG, "Error merging simulated remote portals: ${e.message}")
                 }
@@ -322,10 +494,10 @@ object FirebaseManager {
         }
 
         try {
-            val url = "https://$activeProjectId-default-rtdb.firebaseio.com/users/${user.uid}/portals.json?auth=${user.token}"
-            val request = Request.Builder().url(url).build()
+            val relativePath = "/users/$targetUid/portals.json"
+            val queryParams = if (user != null) "auth=${user.token}" else ""
             
-            client.newCall(request).execute().use { response ->
+            executeFirebaseCall(relativePath, queryParams, "GET").use { response ->
                 if (response.isSuccessful) {
                     val body = response.body?.string() ?: "null"
                     if (body == "null" || body.isEmpty()) {
@@ -389,10 +561,10 @@ object FirebaseManager {
         }
 
         try {
-            // Save to Firebase Realtime Database
-            val url = "https://$activeProjectId-default-rtdb.firebaseio.com/users/${user.uid}/portals/${portal.id}.json?auth=${user.token}"
+            val relativePath = "/users/${user.uid}/portals/${portal.id}.json"
+            val queryParams = "auth=${user.token}"
             
-            val json = JSONObject().apply {
+            val innerJson = JSONObject().apply {
                 put("id", portal.id)
                 put("name", portal.name)
                 put("hostUrl", portal.hostUrl)
@@ -403,12 +575,13 @@ object FirebaseManager {
                 put("url", portal.url)
             }
 
-            val request = Request.Builder()
-                .url(url)
-                .put(json.toString().toRequestBody("application/json".toMediaType()))
-                .build()
+            val encryptedString = encrypt(innerJson.toString(), user.uid)
+            val jsonPayload = JSONObject().apply {
+                put("encrypted", true)
+                put("data", encryptedString)
+            }
 
-            client.newCall(request).execute().use { response ->
+            executeFirebaseCall(relativePath, queryParams, "PUT", jsonPayload.toString()).use { response ->
                 if (response.isSuccessful) {
                     syncStatusMessage.value = "Cloud Provision Storage Synchronized"
                     return@withContext Result.success(true)
@@ -442,10 +615,10 @@ object FirebaseManager {
         }
 
         try {
-            val url = "https://$activeProjectId-default-rtdb.firebaseio.com/users/${user.uid}/portals/$portalId.json?auth=${user.token}"
-            val request = Request.Builder().url(url).delete().build()
+            val relativePath = "/users/${user.uid}/portals/$portalId.json"
+            val queryParams = "auth=${user.token}"
             
-            client.newCall(request).execute().use { response ->
+            executeFirebaseCall(relativePath, queryParams, "DELETE").use { response ->
                 if (response.isSuccessful) {
                     syncStatusMessage.value = "Profile deleted from Cloud Storage"
                     return@withContext Result.success(true)
@@ -461,16 +634,81 @@ object FirebaseManager {
     }
 
     // Helper utilities for local persistence backups
+    private fun getSecretKeySpec(keyString: String): SecretKeySpec {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val bytes = keyString.toByteArray(Charsets.UTF_8)
+        val keyBytes = digest.digest(bytes)
+        return SecretKeySpec(keyBytes, "AES")
+    }
+
+    fun encrypt(data: String, key: String): String {
+        return try {
+            val secretKey = getSecretKeySpec(key)
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            val iv = ByteArray(16) // Zero IV for simplicity and determinism
+            val ivSpec = IvParameterSpec(iv)
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey, ivSpec)
+            val encryptedBytes = cipher.doFinal(data.toByteArray(Charsets.UTF_8))
+            Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            Log.e(TAG, "Encryption error: ${e.message}", e)
+            data // fallback
+        }
+    }
+
+    fun decrypt(encryptedData: String, key: String): String {
+        return try {
+            val secretKey = getSecretKeySpec(key)
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            val iv = ByteArray(16)
+            val ivSpec = IvParameterSpec(iv)
+            cipher.init(Cipher.DECRYPT_MODE, secretKey, ivSpec)
+            val decodedBytes = Base64.decode(encryptedData, Base64.NO_WRAP)
+            val decryptedBytes = cipher.doFinal(decodedBytes)
+            val decrypted = String(decryptedBytes, Charsets.UTF_8)
+            if (diagnosticLoggingEnabled) {
+                try {
+                    val prettyJson = JSONObject(decrypted).toString(4)
+                    Log.d(TAG, "[DIAGNOSTIC] Decrypted Firebase payload content:\n$prettyJson")
+                } catch (je: Exception) {
+                    Log.d(TAG, "[DIAGNOSTIC] Decrypted Firebase payload content: $decrypted")
+                }
+            }
+            decrypted
+        } catch (e: Exception) {
+            Log.e(TAG, "Decryption error: ${e.message}")
+            if (encryptedData.trim().startsWith("{")) {
+                encryptedData
+            } else {
+                ""
+            }
+        }
+    }
+
     private fun parsePortalJson(id: String, obj: JSONObject): ProvisionedPortal {
+        val finalObj = if (obj.optBoolean("encrypted", false)) {
+            val uid = currentUser.value?.uid
+            if (uid != null) {
+                val decrypted = decrypt(obj.optString("data"), uid)
+                if (decrypted.isNotEmpty()) {
+                    try {
+                        JSONObject(decrypted)
+                    } catch (e: Exception) {
+                        obj
+                    }
+                } else obj
+            } else obj
+        } else obj
+
         return ProvisionedPortal(
-            id = obj.optString("id", id),
-            name = obj.optString("name", "Portal Subscription"),
-            hostUrl = obj.optString("hostUrl", ""),
-            port = obj.optString("port", ""),
-            username = obj.optString("username", ""),
-            password = obj.optString("password", ""),
-            type = obj.optString("type", "XTREAM"),
-            url = obj.optString("url", "")
+            id = finalObj.optString("id", id),
+            name = finalObj.optString("name", "Portal Subscription"),
+            hostUrl = finalObj.optString("hostUrl", ""),
+            port = finalObj.optString("port", ""),
+            username = finalObj.optString("username", ""),
+            password = finalObj.optString("password", ""),
+            type = finalObj.optString("type", "XTREAM"),
+            url = finalObj.optString("url", "")
         )
     }
 
@@ -526,38 +764,83 @@ object FirebaseManager {
         return code
     }
 
+    fun getAndroidId(context: Context): String {
+        return try {
+            android.provider.Settings.Secure.getString(
+                context.contentResolver,
+                android.provider.Settings.Secure.ANDROID_ID
+            ) ?: "unknown"
+        } catch (e: Exception) {
+            Log.e(TAG, "Error obtaining ANDROID_ID: ${e.message}")
+            "unknown"
+        }
+    }
+
     suspend fun registerDeviceForProvisioning(context: Context): Result<Boolean> = withContext(Dispatchers.IO) {
-        val user = currentUser.value ?: return@withContext Result.failure(Exception("No Authenticated User"))
+        val user = currentUser.value
         val code = getProvisioningCode(context)
+        val aid = getAndroidId(context)
         val isMock = activeProjectId.isEmpty()
         if (isMock) {
             val simDb = context.getSharedPreferences("simulated_remote_db", Context.MODE_PRIVATE)
-            simDb.edit()
-                .putString("code_email_$code", user.email)
-                .putString("code_uid_$code", user.uid)
-                .apply()
-            syncStatusMessage.value = "Device registered locally (Code: $code)"
+            val editor = simDb.edit()
+            val targetEmail = user?.email ?: "anonymous@device.provisioning"
+            val targetUid = user?.uid ?: "anon_$code"
+            editor.putString("code_email_$code", targetEmail)
+            editor.putString("code_uid_$code", targetUid)
+            if (aid.isNotEmpty() && aid != "unknown") {
+                editor.putString("code_email_$aid", targetEmail)
+                editor.putString("code_uid_$aid", targetUid)
+            }
+            editor.apply()
+            syncStatusMessage.value = "Device registered locally (Code: $code / ID: $aid)"
             return@withContext Result.success(true)
         }
         try {
-            val url = "https://$activeProjectId-default-rtdb.firebaseio.com/devices/$code.json?auth=${user.token}"
-            val json = JSONObject().apply {
-                put("uid", user.uid)
-                put("email", user.email)
+            val innerJson = JSONObject().apply {
+                if (user != null) {
+                    put("uid", user.uid)
+                    put("email", user.email)
+                } else {
+                    put("uid", "anon_$code")
+                    put("email", "anonymous@device.provisioning")
+                }
                 put("timestamp", System.currentTimeMillis())
             }
-            val request = Request.Builder()
-                .url(url)
-                .put(json.toString().toRequestBody("application/json".toMediaType()))
-                .build()
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    Log.d(TAG, "Device registered for remote provisioning: $code -> ${user.uid}")
-                    return@withContext Result.success(true)
-                } else {
-                    Log.e(TAG, "Failed to register device: ${response.code}")
-                    return@withContext Result.failure(Exception("API Error ${response.code}"))
+            val encryptedString = encrypt(innerJson.toString(), code)
+            val jsonCode = JSONObject().apply {
+                put("encrypted", true)
+                put("data", encryptedString)
+            }
+            
+            val queryParams = if (user != null) "auth=${user.token}" else ""
+            
+            val codeSuccess = executeFirebaseCall("/devices/$code.json", queryParams, "PUT", jsonCode.toString()).use { response ->
+                response.isSuccessful
+            }
+
+            var aidSuccess = true
+            if (aid.isNotEmpty() && aid != "unknown") {
+                val encryptedStringAid = encrypt(innerJson.toString(), aid)
+                val jsonAid = JSONObject().apply {
+                    put("encrypted", true)
+                    put("data", encryptedStringAid)
                 }
+                aidSuccess = executeFirebaseCall("/devices/$aid.json", queryParams, "PUT", jsonAid.toString()).use { response ->
+                    response.isSuccessful
+                }
+            }
+
+            if (codeSuccess && aidSuccess) {
+                Log.d(TAG, "Device registered for remote provisioning: $code & $aid -> ${user?.uid ?: "anon_$code"}")
+                // If the user was unauthenticated, trigger loading of their specific portals so they sync up right away
+                if (user == null) {
+                    loadProvisionedPortals(context)
+                }
+                return@withContext Result.success(true)
+            } else {
+                Log.e(TAG, "Failed fully registering device. code success: $codeSuccess, aid success: $aidSuccess")
+                return@withContext Result.failure(Exception("Failed to register device to Firebase"))
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed registering device code: ${e.message}")
@@ -588,7 +871,7 @@ object FirebaseManager {
             }
 
             val id = "portal_" + System.currentTimeMillis()
-            val jsonPortal = JSONObject().apply {
+            val innerJson = JSONObject().apply {
                 put("id", id)
                 put("name", name)
                 put("hostUrl", host)
@@ -597,6 +880,12 @@ object FirebaseManager {
                 put("password", pass)
                 put("type", type)
                 put("url", m3uUrl)
+            }
+
+            val encryptedString = encrypt(innerJson.toString(), targetUid)
+            val jsonPortal = JSONObject().apply {
+                put("encrypted", true)
+                put("data", encryptedString)
             }
 
             val targetPortalsRaw = simDb.getString("portals_$targetUid", "[]")
@@ -608,14 +897,13 @@ object FirebaseManager {
             return@withContext Result.success(true)
         }
 
-        val currUser = currentUser.value ?: return@withContext Result.failure(Exception("No Authenticated Admin User Session"))
+        val currUser = currentUser.value
 
         try {
-            val lookupUrl = "https://$activeProjectId-default-rtdb.firebaseio.com/devices/$targetCode.json?auth=${currUser.token}"
-            val lookupRequest = Request.Builder().url(lookupUrl).build()
+            val queryParams = if (currUser != null) "auth=${currUser.token}" else ""
             
             var targetUid: String? = null
-            client.newCall(lookupRequest).execute().use { response ->
+            executeFirebaseCall("/devices/$targetCode.json", queryParams, "GET").use { response ->
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(Exception("Device lookup failed: API error ${response.code}"))
                 }
@@ -623,8 +911,15 @@ object FirebaseManager {
                 if (body == "null" || body.isEmpty()) {
                     return@withContext Result.failure(Exception("Target provisioning code '$targetCode' not registered or invalid"))
                 }
+                
                 val obj = JSONObject(body)
-                targetUid = obj.optString("uid", null)
+                val resolvedObj = if (obj.optBoolean("encrypted", false)) {
+                    val decrypted = decrypt(obj.optString("data"), targetCode)
+                    if (decrypted.isNotEmpty()) JSONObject(decrypted) else obj
+                } else {
+                    obj
+                }
+                targetUid = resolvedObj.optString("uid", null)
             }
 
             if (targetUid.isNullOrEmpty()) {
@@ -632,9 +927,8 @@ object FirebaseManager {
             }
 
             val portalId = "portal_" + System.currentTimeMillis()
-            val writeUrl = "https://$activeProjectId-default-rtdb.firebaseio.com/users/$targetUid/portals/$portalId.json?auth=${currUser.token}"
             
-            val json = JSONObject().apply {
+            val innerJson = JSONObject().apply {
                 put("id", portalId)
                 put("name", name)
                 put("hostUrl", host)
@@ -645,12 +939,13 @@ object FirebaseManager {
                 put("url", m3uUrl)
             }
 
-            val writeRequest = Request.Builder()
-                .url(writeUrl)
-                .put(json.toString().toRequestBody("application/json".toMediaType()))
-                .build()
+            val encryptedString = encrypt(innerJson.toString(), targetUid)
+            val json = JSONObject().apply {
+                put("encrypted", true)
+                put("data", encryptedString)
+            }
 
-            client.newCall(writeRequest).execute().use { response ->
+            executeFirebaseCall("/users/$targetUid/portals/$portalId.json", queryParams, "PUT", json.toString()).use { response ->
                 if (response.isSuccessful) {
                     return@withContext Result.success(true)
                 } else {

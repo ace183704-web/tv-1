@@ -62,6 +62,7 @@ fun SettingsScreen(viewModel: IptvViewModel) {
     val autoRefresh by viewModel.automationAutoRefresh.collectAsState()
     val loadLastChannel by viewModel.automationLoadLast.collectAsState()
     val bootStart by viewModel.automationBootStart.collectAsState()
+    val diagnosticLoggingEnabled by viewModel.diagnosticLoggingEnabled.collectAsState()
     val buffSize by viewModel.playerBuffering.collectAsState()
     val hwDecoders by viewModel.playerHwDecoders.collectAsState()
     val activeExtPlayer by viewModel.activeExternalPlayer.collectAsState()
@@ -293,29 +294,91 @@ fun SettingsScreen(viewModel: IptvViewModel) {
                 colors = CardDefaults.cardColors(containerColor = SoftGrey.copy(alpha = 0.3f)),
                 border = BorderStroke(1.dp, Color(0xFF23356D))
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.CloudQueue, contentDescription = "cloud", tint = CinemaGold, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.CloudQueue, contentDescription = "cloud", tint = CinemaGold, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Loaded Portals Directory: ${playlists.size} Registered",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextWhite
+                            )
+                        }
                         Text(
-                            text = "Loaded Portals Directory: ${playlists.size} Registered",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = TextWhite
+                            text = "VERSION 4.0.2 - STABLE",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = TextMuted
                         )
                     }
-                    Text(
-                        text = "VERSION 4.0.2 - STABLE",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = TextMuted
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        color = Color(0xFF23356D),
+                        thickness = 1.dp
                     )
+
+                    val androidId = remember {
+                        try {
+                            android.provider.Settings.Secure.getString(
+                                context.contentResolver,
+                                android.provider.Settings.Secure.ANDROID_ID
+                            ) ?: "UNKNOWN"
+                        } catch (e: Exception) {
+                            "UNKNOWN"
+                        }
+                    }
+                    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = "info",
+                                tint = ElectricCyan,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Device Android ID: ",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextWhite
+                            )
+                            Text(
+                                text = androidId,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CinemaGold,
+                                modifier = Modifier
+                                    .testTag("settings_android_id_str")
+                                    .clickable {
+                                        clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(androidId))
+                                        android.widget.Toast.makeText(context, "Android ID copied to clipboard!", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                            )
+                        }
+                        Text(
+                            text = "Tap ID to Copy",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextMuted
+                        )
+                    }
                 }
             }
         }
@@ -351,6 +414,7 @@ fun SettingsOverlayDialog(
     val autoRefresh by viewModel.automationAutoRefresh.collectAsState()
     val loadLastChannel by viewModel.automationLoadLast.collectAsState()
     val bootStart by viewModel.automationBootStart.collectAsState()
+    val diagnosticLoggingEnabled by viewModel.diagnosticLoggingEnabled.collectAsState()
     val buffSize by viewModel.playerBuffering.collectAsState()
     val hwDecoders by viewModel.playerHwDecoders.collectAsState()
     val activeExtPlayer by viewModel.activeExternalPlayer.collectAsState()
@@ -672,6 +736,28 @@ fun SettingsOverlayDialog(
                                 Switch(
                                     checked = bootStart,
                                     onCheckedChange = { viewModel.automationBootStart.value = it },
+                                    colors = SwitchDefaults.colors(checkedThumbColor = CinemaGold, checkedTrackColor = CinemaGold.copy(alpha = 0.5f))
+                                )
+                            }
+
+                            // Option 4 (Diagnostic Logging debug mode)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF142044))
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Enable Diagnostic Logging (Debug Mode)", color = TextWhite, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("Outputs decrypted Firebase payload contents to the local app system log files", color = TextMuted, fontSize = 10.sp)
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Switch(
+                                    checked = diagnosticLoggingEnabled,
+                                    onCheckedChange = { viewModel.diagnosticLoggingEnabled.value = it },
                                     colors = SwitchDefaults.colors(checkedThumbColor = CinemaGold, checkedTrackColor = CinemaGold.copy(alpha = 0.5f))
                                 )
                             }
