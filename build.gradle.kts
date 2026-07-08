@@ -9,24 +9,41 @@ plugins {
 }
 
 // Ensure the APK copy is done during Gradle configuration phase
-val srcApk = file(".build-outputs/app-debug.apk")
+val srcApkBuild = file("app/build/outputs/apk/debug/app-debug.apk")
+val srcApkPlatform = file(".build-outputs/app-debug.apk")
 val downloadDir = file("APK_DOWNLOAD")
 downloadDir.mkdirs()
-val destApk = file("APK_DOWNLOAD/app-debug.apk")
-if (srcApk.exists()) {
-    srcApk.copyTo(destApk, overwrite = true)
-    logger.lifecycle("SUCCESS_COPY_APK: Copied APK to APK_DOWNLOAD/app-debug.apk. Size: ${destApk.length()} bytes.")
+
+fun copyApkToDownload(src: java.io.File) {
+    if (src.exists()) {
+        val destApk = file("APK_DOWNLOAD/app-debug.apk")
+        val destApkBin = file("APK_DOWNLOAD/app-debug.apk.bin")
+        val destBin = file("APK_DOWNLOAD/app-debug.bin")
+        
+        src.copyTo(destApk, overwrite = true)
+        src.copyTo(destApkBin, overwrite = true)
+        src.copyTo(destBin, overwrite = true)
+        
+        logger.lifecycle("SUCCESS_COPY_APK: Copied APK from ${src.path} to APK_DOWNLOAD/ with size: ${destApk.length()} bytes.")
+    }
+}
+
+if (srcApkBuild.exists()) {
+    copyApkToDownload(srcApkBuild)
+} else if (srcApkPlatform.exists()) {
+    copyApkToDownload(srcApkPlatform)
 } else {
-    logger.lifecycle("ERROR_COPY_APK: Source APK does not exist in .build-outputs/app-debug.apk")
+    logger.lifecycle("WARNING_COPY_APK: Source APK not found yet.")
 }
 
 tasks.register("copyApk") {
     doLast {
-        if (srcApk.exists()) {
-            srcApk.copyTo(destApk, overwrite = true)
-            println("SUCCESS_COPY_APK: Copied APK to APK_DOWNLOAD/app-debug.apk. Size: ${destApk.length()} bytes.")
+        if (srcApkBuild.exists()) {
+            copyApkToDownload(srcApkBuild)
+        } else if (srcApkPlatform.exists()) {
+            copyApkToDownload(srcApkPlatform)
         } else {
-            println("ERROR_COPY_APK: Source APK does not exist in .build-outputs/app-debug.apk")
+            println("ERROR_COPY_APK: No source APK found in build outputs or .build-outputs")
         }
     }
 }
